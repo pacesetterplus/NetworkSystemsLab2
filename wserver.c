@@ -22,19 +22,19 @@
 #define BUFLEN      1500
 #define NUM_THREADS   10
 
-// There are strong restrictions on what a signal handler is allowed to do. 
+// There are strong restrictions on what a signal handler is allowed to do.
 // See the C11 standard, section 7.14.1.1 paragraph 5 for details (the full
 // standard is available for purchase from ISO, but the final working draft
 // is online at http://www.open-std.org/jtc1/sc22/WG14/www/docs/n1570.pdf).
 static volatile sig_atomic_t shutdown_requested = 0;
 
-static void
+/* static void
 signal_handler(int sig)
 {
   if (sig == SIGINT) {
     shutdown_requested = 1;
   }
-}
+} */
 
 // Work queue implementation:
 
@@ -126,7 +126,7 @@ wq_should_exit(struct work_queue *wq)
   return should_exit;
 }
 
-static void 
+static void
 wq_shutdown(struct work_queue *wq)
 {
   pthread_mutex_lock(&wq->lock);
@@ -216,6 +216,7 @@ send_response_200(int fd, char *filename, int inf, int id)
     sprintf(headers, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n%s\r\n", buf);
   } else if (strcmp(extn, ".jpg") == 0) {
     sprintf(headers, "HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\n%s\r\n", buf);
+    printf("%s\n",buf);
   } else {
     // Unknown extension
     sprintf(headers, "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n%s\r\n", buf);
@@ -226,8 +227,8 @@ send_response_200(int fd, char *filename, int inf, int id)
   }
 
   // Send the requested file
-  while ((rlen = read(inf, buf, BUFLEN)) > 0) {
-    if (send_response(fd, buf, strlen(buf)) == -1) {
+  while ((rlen = read(inf, buf, BUFLEN)) > 0) {// change strlen to rlen, length of byte read
+    if (send_response(fd, buf, rlen) == -1) {
       return -1;
     }
   }
@@ -236,12 +237,40 @@ send_response_200(int fd, char *filename, int inf, int id)
   return 0;
 }
 
+static int send_response_307(int fd, char *filename, int id){
+  //temporary redirect
+  char buffer[65535];
+  printf("responder %d: 307 %s\n", id, filename);
+  sprintf(buffer, "HTTP/1.1 307 Temporary Redirect\r\n"
+                  "Location: /%s/index.html\r\n"
+                  "Content-Length: 143\r\n"
+                  "Content-Type: text/html\r\n"
+                  "\r\n"
+                  "<html>\r\n"
+                  "<head>\r\n"
+                  "<title>Redirected</title>\r\n"
+                  "</head>\r\n"
+                  "</body>\r\n"
+                  "<p>Redirecting.....</>\r\n"
+                  "</body>\r\n"
+                  "</html>\r\n",
+          filename);
+  return send_response(fd,buffer, strlen(buffer));
+}
+
+int is_regular_file(const char *path)
+{
+  struct stat path_stat;
+  stat(path, &path_stat);
+  return S_ISREG(path_stat.st_mode);
+}
+
 static int
 send_response_404(int fd, char *filename, int id)
 {
   // Requested file doesn't exist, send an error
   char buffer[65535];
-  
+
   printf("responder %d: 404 %s\n", id, filename);
 
   sprintf(buffer, "HTTP/1.1 404 File Not Found\r\n"
@@ -257,7 +286,7 @@ send_response_404(int fd, char *filename, int id)
                   "</body>\r\n"                             //  9
                   "</html>\r\n"                             //  9
          );                                                 // 113 total
- 
+
   return send_response(fd, buffer, strlen(buffer));
 }
 
@@ -282,7 +311,7 @@ send_response_500(int fd, char *filename, int id)
                   "<p> Internal Error </p>\r\n"                    //  25
                   "</body>\r\n"                                    //   9
                   "</html>\r\n"                                    //   9
-         );                                                        // total: 120 
+         );                                                        // total: 120
 
   return send_response(fd, buffer, strlen(buffer));
 }
@@ -290,7 +319,7 @@ send_response_500(int fd, char *filename, int id)
 static int
 hostname_matches(char *headers)
 {
-  char  *host; 
+  char  *host;
   char  *colonpos;
   char   hostname[256];
   char   myhostname[256];
@@ -305,7 +334,7 @@ hostname_matches(char *headers)
     return 0;
   }
 
-  // When running on a non-standard port, browsers include a colon 
+  // When running on a non-standard port, browsers include a colon
   // and the port number in the "Host:" header. Strip this out.
   if ((colonpos = strchr(hostname, ':')) != NULL) {
     *colonpos = '\0';
@@ -319,7 +348,7 @@ hostname_matches(char *headers)
     // 2) The hostname in the request doesn't include the domain name, but
     //    gethostname() on this machine does (gethostname() works this way
     //    on MacOS X)
-    // 3) The hostname in the request might include the full domain name, 
+    // 3) The hostname in the request might include the full domain name,
     //    while gethostname() on this machine returns only the host part
     //    (this is how gethostname() works on Linux)
     // Cases (2) and (3) are okay, and should be accepted, so we check for
@@ -331,7 +360,7 @@ hostname_matches(char *headers)
     sprintf(myNameDom, "%s.%s", myhostname, domainname);
     sprintf(reNameDom, "%s.%s",   hostname, domainname);
 
-    if ((strcmp(hostname, myNameDom) != 0) && 
+    if ((strcmp(hostname, myNameDom) != 0) &&
        (strcmp(reNameDom, myhostname) == 0))
     {
       return 0;
@@ -351,7 +380,7 @@ read_headers(int fd)
   headers[0] = '\0';
   while (strstr(headers, "\r\n\r\n") == NULL) {
     rlen = recv(fd, buf, BUFLEN, 0);
-    if (rlen ==  0) { 
+    if (rlen ==  0) {
       // Connection closed by client
       free(headers);
       return NULL;
@@ -371,7 +400,7 @@ read_headers(int fd)
       return NULL;
     }
   }
-
+  printf("%s\n",headers);
   return headers;
 }
 
@@ -420,6 +449,7 @@ response_thread(void *arg)
       }
 
       sprintf(filename, "website%s", basename);
+      printf("Basename is: %s\n", basename);
       if ((inf = open(filename, O_RDONLY, 0)) == -1) {
         if (send_response_404(fd, filename, id) == -1) {
           free(headers);
@@ -450,7 +480,7 @@ response_thread(void *arg)
   return NULL;
 }
 
-static void 
+static void
 process_connections(struct work_queue *wq)
 {
   int                sfd;
@@ -470,14 +500,14 @@ process_connections(struct work_queue *wq)
       perror("listener: unable to accept connection");
       break;
     } else {
-#ifdef __APPLE__ 
-      // The MSG_NOSIGNAL flag to send() isn't supported on macOS, so set 
+#ifdef __APPLE__
+      // The MSG_NOSIGNAL flag to send() isn't supported on macOS, so set
       // the SO_NOSIGPIPE option on the socket as a workaround.
       int opt = 1;
       if (setsockopt(cfd, SOL_SOCKET, SO_NOSIGPIPE, &opt, sizeof(opt)) == -1) {
         perror("listener: warning - cannot set SO_NOSIGPIPE");
       }
-#endif 
+#endif
 
       wq_add(wq, cfd);
     }
@@ -488,7 +518,7 @@ process_connections(struct work_queue *wq)
   printf("listener: done\n");
 }
 
-int 
+int
 main(void)
 {
   int                id;
@@ -496,7 +526,7 @@ main(void)
   pthread_t          threads[NUM_THREADS];
 
   // Catch SIGINT (ctrl-c) and signal main loop to exit
-  signal(SIGINT, signal_handler);
+  //signal(SIGINT, signal_handler);
 
   for (id = 0; id < NUM_THREADS; id++) {
     struct response_params *p = malloc(sizeof(struct response_params));
