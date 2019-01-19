@@ -18,6 +18,8 @@
 #include <stdlib.h>   // For malloc()
 #include <signal.h>
 #include <unistd.h>
+#include <dirent.h>
+
 
 #define BUFLEN      1500
 #define NUM_THREADS   10
@@ -242,7 +244,7 @@ static int send_response_307(int fd, char *filename, int id){
   char buffer[65535];
   printf("responder %d: 307 %s\n", id, filename);
   sprintf(buffer, "HTTP/1.1 307 Temporary Redirect\r\n"
-                  "Location: /%s/index.html\r\n"
+                  "Location: /%sindex.html\r\n"
                   "Content-Length: 143\r\n"
                   "Content-Type: text/html\r\n"
                   "\r\n"
@@ -255,6 +257,7 @@ static int send_response_307(int fd, char *filename, int id){
                   "</body>\r\n"
                   "</html>\r\n",
           filename);
+          printf("buffer from 307 is: %s\n", buffer);
   return send_response(fd,buffer, strlen(buffer));
 }
 
@@ -409,6 +412,15 @@ struct response_params {
   int                id;
 };
 
+int is_dir(const char* name)
+{
+    struct stat st;
+    if (-1 == stat(name, &st)) {
+      return -1; // check errno to see what went wrong
+    }
+    return (int)((st.st_mode & S_IFDIR) == S_IFDIR);
+}
+
 static void *
 response_thread(void *arg)
 {
@@ -453,20 +465,41 @@ response_thread(void *arg)
       printf("Basename is: %s\n", basename);
       printf("filename is: %s\n", filename);
 
-      if (strcmp(basename,"/") == 0){
-          if (send_response_307(fd, filename, id) == -1) {
-          free(headers);
-          break;
-          }
-      }
+      int dir = is_dir(filename);
+      if(dir){
+        printf("it is a directory and name is %s\n",filename);
+        //open directory
+        DIR *dir_open = opendir(filename);
+        if(dir_open){
+          printf("Dir is now open\n");
+          struct dirent *file = readdir(dir_open);
+          while(file){
+            printf("Filename is %s\n", file->d_name);
+            if(strcmp(file->d_name,"index.html") == 0){
+              //index.html found in dir, redirect to 307
+              if(send_response_307(fd,filename,id) == -1){
+                free(headers);
+                break;
+        }
+              break;
+            }
+            file = readdir(dir_open);
+            }
+        closedir(dir_open);
+        }
 
-      if ((inf = open(filename, O_RDONLY, 0)) == -1) {
+      }
+      inf = open(filename, O_RDONLY, 0);
+      printf("inf is %d and filename is %s\n", inf, filename);
+
+      if (inf == -1) {
         if (send_response_404(fd, filename, id) == -1) {
           free(headers);
           break;
         }
+        
       } else {
-        if (send_response_200(fd, filename, inf, id) == -1) {
+          if (send_response_200(fd, filename, inf, id) == -1) {
           free(headers);
           break;
         }
