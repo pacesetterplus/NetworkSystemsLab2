@@ -436,6 +436,7 @@ response_thread(void *arg)
       // Note that we specify a maximum field width, to avoid buffer
       // overflow attacks when parsing long filenames.
       if (sscanf(headers, "GET %1023s HTTP/1.1", basename) != 1) {
+        printf("Header is: %s\n",headers);
         printf("Cannot parse HTTP GET request\n");
         send_response_500(fd, basename, id);
         free(headers);
@@ -450,6 +451,15 @@ response_thread(void *arg)
 
       sprintf(filename, "website%s", basename);
       printf("Basename is: %s\n", basename);
+      printf("filename is: %s\n", filename);
+
+      if (strcmp(basename,"/") == 0){
+          if (send_response_307(fd, filename, id) == -1) {
+          free(headers);
+          break;
+          }
+      }
+
       if ((inf = open(filename, O_RDONLY, 0)) == -1) {
         if (send_response_404(fd, filename, id) == -1) {
           free(headers);
